@@ -1,0 +1,6 @@
+{
+  "name": "DocxPhotoGrid",
+  "description": "Gerador de documentos Word (.docx) editáveis a partir de imagens com alinhamento padronizado de 4 fotos por linha.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
