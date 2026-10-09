@@ -9,6 +9,7 @@ import {
   Check,
   Sparkles,
   Maximize2,
+  Plus,
 } from 'lucide-react';
 import { PhotoItem, DocumentConfig } from '../types';
 
@@ -20,6 +21,7 @@ interface PhotoGridEditorProps {
   onMovePhoto: (index: number, targetIndex: number) => void;
   onBatchRotate: () => void;
   onBatchNumber: () => void;
+  onAddPhotosClick?: () => void;
 }
 
 export const PhotoGridEditor: React.FC<PhotoGridEditorProps> = ({
@@ -30,6 +32,7 @@ export const PhotoGridEditor: React.FC<PhotoGridEditorProps> = ({
   onMovePhoto,
   onBatchRotate,
   onBatchNumber,
+  onAddPhotosClick,
 }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [tempCaption, setTempCaption] = useState<string>('');
@@ -94,6 +97,18 @@ export const PhotoGridEditor: React.FC<PhotoGridEditorProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {onAddPhotosClick && (
+            <button
+              type="button"
+              onClick={onAddPhotosClick}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-blue-700 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors cursor-pointer"
+              title="Carregar mais fotos em lote"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>+ Fotos</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={onBatchNumber}
@@ -142,16 +157,18 @@ export const PhotoGridEditor: React.FC<PhotoGridEditorProps> = ({
                   return (
                     <div
                       key={`empty-${rowIdx}-${colIdx}`}
-                      className="border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center p-4 text-center bg-slate-50/50 min-h-[160px]"
+                      onClick={onAddPhotosClick}
+                      className="border-2 border-dashed border-slate-200 hover:border-blue-400 hover:bg-blue-50/30 transition-all cursor-pointer rounded-xl flex flex-col items-center justify-center p-4 text-center bg-slate-50/50 min-h-[160px] group"
+                      title="Clique para carregar fotos neste espaço"
                     >
-                      <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-400 flex items-center justify-center text-xs font-mono font-medium mb-1">
-                        {colIdx + 1}
+                      <div className="w-8 h-8 rounded-lg bg-slate-100 group-hover:bg-blue-100 text-slate-400 group-hover:text-blue-600 flex items-center justify-center text-xs font-mono font-medium mb-1 transition-colors">
+                        <Plus className="w-4 h-4" />
                       </div>
-                      <span className="text-[11px] font-medium text-slate-400">
-                        Espaço Vazio
+                      <span className="text-[11px] font-medium text-slate-500 group-hover:text-blue-700">
+                        Espaço Livre
                       </span>
-                      <span className="text-[10px] text-slate-300">
-                        Mantém alinhamento padrão
+                      <span className="text-[10px] text-slate-400">
+                        Clique para + fotos
                       </span>
                     </div>
                   );

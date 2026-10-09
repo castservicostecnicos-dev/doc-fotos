@@ -96,9 +96,22 @@ export async function processImageForDocx(
 export function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = (err) => reject(new Error(`Failed to load image: ${err}`));
+    // Only set crossOrigin for remote http(s) URLs; setting on blob/data can fail in some browsers
+    if (src.startsWith('http://') || src.startsWith('https://')) {
+      img.crossOrigin = 'anonymous';
+    }
+    const timeout = setTimeout(() => {
+      reject(new Error('Tempo limite excedido ao carregar imagem'));
+    }, 15000);
+
+    img.onload = () => {
+      clearTimeout(timeout);
+      resolve(img);
+    };
+    img.onerror = (err) => {
+      clearTimeout(timeout);
+      reject(new Error(`Failed to load image: ${err}`));
+    };
     img.src = src;
   });
 }

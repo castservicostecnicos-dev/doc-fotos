@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   FileText,
   Upload,
@@ -9,6 +9,8 @@ import {
   FolderOpen,
   ArrowRight,
   Info,
+  UploadCloud,
+  Folder,
 } from 'lucide-react';
 import { PhotoItem, DocumentConfig } from './types';
 import { Header } from './components/Header';
@@ -19,10 +21,15 @@ import { DocumentPreview } from './components/DocumentPreview';
 import { generateSampleImages } from './utils/sampleImages';
 import { generateDocxFile, downloadBlobAsDocx } from './services/docxGenerator';
 
+const IMAGE_EXTENSION_REGEX = /\.(jpe?g|png|webp|gif|bmp|tiff?|heic|heif|jfif|svg|avif)$/i;
+
 export default function App() {
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
   const [activeTab, setActiveTab] = useState<'editor' | 'preview'>('editor');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isBatchLoading, setIsBatchLoading] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(null);
+  const [isWindowDragging, setIsWindowDragging] = useState(false);
   const [generationProgress, setGenerationProgress] = useState<{
     current: number;
     total: number;
@@ -32,6 +39,9 @@ export default function App() {
     type: 'success' | 'error' | 'info';
     text: string;
   } | null>(null);
+
+  const globalFileInputRef = useRef<HTMLInputElement>(null);
+  const globalFolderInputRef = useRef<HTMLInputElement>(null);
 
   // Initial Document Configuration
   const [config, setConfig] = useState<DocumentConfig>({
@@ -57,10 +67,138 @@ export default function App() {
       setToastMessage({ type, text });
       setTimeout(() => {
         setToastMessage(null);
-      }, 4000);
+      }, 4500);
     },
     []
   );
+
+  const isImageFile = (file: File): boolean => {
+    if (file.type && file.type.startsWith('image/')) return true;
+    if (IMAGE_EXTENSION_REGEX.test(file.name)) return true;
+    return false;
+  };
+
+  // High-performance batch image processor
+  const processBatchFiles = useCallback(
+    async (rawInputFiles: FileList | File[]) => {
+      const fileList = Array.from(rawInputFiles);
+      const validImages = fileList.filter(isImageFile);
+
+      if (validImages.length === 0) {
+        showToast('Nenhum arquivo de imagem válido encontrado. Use arquivos JPG, PNG, WEBP ou GIF.', 'error');
+        return;
+      }
+
+      setIsBatchLoading(true);
+      setBatchProgress({ current: 0, total: validImages.length });
+
+      const newItems: PhotoItem[] = [];
+      const batchSize = 8; // Process in chunks of 8
+
+      for (let i = 0; i < validImages.length; i += batchSize) {
+        const slice = validImages.slice(i, i + batchSize);
+
+        const results = await Promise.all(
+          slice.map(async (file, sliceIdx) => {
+            const globalIdx = i + sliceIdx;
+            const previewUrl = URL.createObjectURL(file);
+
+            const dimensions = await new Promise<{ width: number; height: number }>((resolve) => {
+              const img = new Image();
+              const timer = setTimeout(() => {
+                resolve({ width: 800, height: 600 });
+              }, 2000);
+
+              img.onload = () => {
+                clearTimeout(timer);
+                resolve({
+                  width: img.naturalWidth || 800,
+                  height: img.naturalHeight || 600,
+                });
+              };
+              img.onerror = () => {
+                clearTimeout(timer);
+                resolve({ width: 800, height: 600 });
+              };
+              img.src = previewUrl;
+            });
+
+            const cleanName = file.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ');
+
+            return {
+              id: `photo-${Date.now()}-${globalIdx}-${Math.random().toString(36).substring(2, 7)}`,
+              name: file.name,
+              file,
+              previewUrl,
+              rotation: 0,
+              caption: cleanName,
+              width: dimensions.width,
+              height: dimensions.height,
+            };
+          })
+        );
+
+        newItems.push(...results);
+        setBatchProgress({
+          current: Math.min(validImages.length, i + batchSize),
+          total: validImages.length,
+        });
+      }
+
+      setPhotos((prev) => [...prev, ...newItems]);
+      setIsBatchLoading(false);
+      setBatchProgress(null);
+      showToast(`${newItems.length} foto(s) carregada(s) em lote na grade de 4 fotos!`, 'success');
+    },
+    [showToast]
+  );
+
+  // Global Drag and Drop onto window
+  useEffect(() => {
+    let dragCounter = 0;
+
+    const handleWindowDragEnter = (e: DragEvent) => {
+      e.preventDefault();
+      dragCounter++;
+      if (e.dataTransfer && e.dataTransfer.types.includes('Files')) {
+        setIsWindowDragging(true);
+      }
+    };
+
+    const handleWindowDragLeave = (e: DragEvent) => {
+      e.preventDefault();
+      dragCounter--;
+      if (dragCounter <= 0) {
+        setIsWindowDragging(false);
+        dragCounter = 0;
+      }
+    };
+
+    const handleWindowDragOver = (e: DragEvent) => {
+      e.preventDefault();
+    };
+
+    const handleWindowDrop = (e: DragEvent) => {
+      e.preventDefault();
+      setIsWindowDragging(false);
+      dragCounter = 0;
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        processBatchFiles(e.dataTransfer.files);
+      }
+    };
+
+    window.addEventListener('dragenter', handleWindowDragEnter);
+    window.addEventListener('dragleave', handleWindowDragLeave);
+    window.addEventListener('dragover', handleWindowDragOver);
+    window.addEventListener('drop', handleWindowDrop);
+
+    return () => {
+      window.removeEventListener('dragenter', handleWindowDragEnter);
+      window.removeEventListener('dragleave', handleWindowDragLeave);
+      window.removeEventListener('dragover', handleWindowDragOver);
+      window.removeEventListener('drop', handleWindowDrop);
+    };
+  }, [processBatchFiles]);
 
   // Paste listener for Ctrl+V images anywhere
   useEffect(() => {
@@ -77,27 +215,26 @@ export default function App() {
       }
 
       if (imageFiles.length > 0) {
-        const newItems: PhotoItem[] = imageFiles.map((file, idx) => ({
-          id: `paste-${Date.now()}-${idx}`,
-          name: file.name || `Imagem Colada ${idx + 1}`,
-          file,
-          previewUrl: URL.createObjectURL(file),
-          rotation: 0,
-          caption: `Imagem Colada ${idx + 1}`,
-          width: 800,
-          height: 600,
-        }));
-        setPhotos((prev) => [...prev, ...newItems]);
-        showToast(
-          `${imageFiles.length} foto(s) colada(s) com sucesso!`,
-          'success'
-        );
+        processBatchFiles(imageFiles);
       }
     };
 
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);
-  }, [showToast]);
+  }, [processBatchFiles]);
+
+  // Trigger batch picker
+  const triggerBatchUpload = () => {
+    globalFileInputRef.current?.click();
+  };
+
+  const handleGlobalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const files = Array.from(e.target.files);
+      e.target.value = '';
+      processBatchFiles(files);
+    }
+  };
 
   // Load sample photos
   const handleLoadSamples = async () => {
@@ -110,13 +247,10 @@ export default function App() {
     }
   };
 
-  // Add photos
+  // Add photos from components
   const handlePhotosAdded = (newPhotos: PhotoItem[]) => {
     setPhotos((prev) => [...prev, ...newPhotos]);
-    showToast(
-      `${newPhotos.length} foto(s) adicionada(s) à grade de 4 colunas!`,
-      'success'
-    );
+    showToast(`${newPhotos.length} foto(s) adicionada(s) à grade de 4 colunas!`, 'success');
   };
 
   // Clear all
@@ -129,9 +263,7 @@ export default function App() {
 
   // Update single photo
   const handleUpdatePhoto = (id: string, updates: Partial<PhotoItem>) => {
-    setPhotos((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, ...updates } : p))
-    );
+    setPhotos((prev) => prev.map((p) => (p.id === id ? { ...p, ...updates } : p)));
   };
 
   // Remove single photo
@@ -216,7 +348,56 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans relative">
+      {/* Hidden global batch inputs */}
+      <input
+        ref={globalFileInputRef}
+        type="file"
+        accept="image/*,.jpg,.jpeg,.png,.webp,.gif,.bmp,.jfif"
+        multiple
+        className="hidden"
+        onChange={handleGlobalFileChange}
+      />
+      <input
+        ref={globalFolderInputRef}
+        type="file"
+        {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+        multiple
+        className="hidden"
+        onChange={handleGlobalFileChange}
+      />
+
+      {/* Global Drag-and-Drop Overlay */}
+      {isWindowDragging && (
+        <div className="fixed inset-0 z-50 bg-blue-900/80 backdrop-blur-xs flex flex-col items-center justify-center text-white pointer-events-none p-6 text-center animate-fade-in">
+          <div className="w-20 h-20 rounded-3xl bg-white/20 border-2 border-white/40 flex items-center justify-center mb-4 animate-bounce">
+            <UploadCloud className="w-10 h-10 text-white" />
+          </div>
+          <h2 className="text-2xl font-bold mb-2">Solte suas fotos aqui</h2>
+          <p className="text-sm text-blue-100 max-w-md">
+            As fotos serão carregadas em lote e organizadas na grade padrão de 4 fotos por linha no documento .docx
+          </p>
+        </div>
+      )}
+
+      {/* Batch Processing Indicator */}
+      {isBatchLoading && batchProgress && (
+        <div className="fixed top-16 left-0 right-0 z-40 bg-blue-600 text-white px-4 py-2 text-xs shadow-md flex items-center justify-between">
+          <div className="flex items-center gap-2 max-w-7xl mx-auto w-full">
+            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin shrink-0" />
+            <span className="font-semibold">
+              Processando lote de imagens: {batchProgress.current} de {batchProgress.total} fotos...
+            </span>
+            <div className="w-48 bg-blue-900/60 rounded-full h-2 ml-auto overflow-hidden hidden sm:block">
+              <div
+                className="bg-white h-2 transition-all duration-150"
+                style={{ width: `${(batchProgress.current / batchProgress.total) * 100}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Toast Notification */}
       {toastMessage && (
         <div
@@ -247,6 +428,7 @@ export default function App() {
         onLoadSamples={handleLoadSamples}
         onClearAll={handleClearAll}
         onGenerateDocx={handleGenerateDocx}
+        onAddPhotosClick={triggerBatchUpload}
         isGenerating={isGenerating}
         generationProgress={generationProgress}
       />
@@ -269,10 +451,26 @@ export default function App() {
                 </p>
                 <div className="flex flex-wrap items-center gap-3">
                   <button
+                    onClick={triggerBatchUpload}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer"
+                  >
+                    <UploadCloud className="w-4 h-4" />
+                    <span>Selecionar Várias Fotos em Lote</span>
+                  </button>
+
+                  <button
+                    onClick={() => globalFolderInputRef.current?.click()}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-xl border border-white/20 transition-colors cursor-pointer"
+                  >
+                    <Folder className="w-4 h-4 text-amber-400" />
+                    <span>Carregar Pasta Inteira</span>
+                  </button>
+
+                  <button
                     onClick={handleLoadSamples}
                     className="inline-flex items-center gap-2 px-4 py-2.5 bg-white hover:bg-slate-100 text-slate-900 text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer"
                   >
-                    <span>Carregar 6 Fotos de Demonstração</span>
+                    <span>Fotos de Amostra</span>
                     <ArrowRight className="w-4 h-4" />
                   </button>
                 </div>
@@ -355,6 +553,7 @@ export default function App() {
                   onMovePhoto={handleMovePhoto}
                   onBatchRotate={handleBatchRotate}
                   onBatchNumber={handleBatchNumber}
+                  onAddPhotosClick={triggerBatchUpload}
                 />
               ) : (
                 <DocumentPreview photos={photos} config={config} />
